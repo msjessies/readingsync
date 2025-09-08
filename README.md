@@ -33,10 +33,10 @@ git push -u origin main
 | Secret 名称 | 值 | 说明 |
 |------------|----|----|
 | `READWISE_TOKEN` | `你的Readwise令牌` | 从 Readwise 设置页面获取 |
-| `FEISHU_APP_ID` | `cli_a8342101b9e81013` | 飞书应用ID |
-| `FEISHU_APP_SECRET` | `NEvihgdxiNX65LEstosgCd7msCBw6TIY` | 飞书应用密钥 |
-| `FEISHU_APP_TOKEN` | `APcrbuGUealLe9sdW8DcZBtCnse` | 飞书多维表格应用令牌 |
-| `FEISHU_TABLE_ID` | `tblUdRDj28uIPVfG` | 飞书表格ID |
+| `FEISHU_APP_ID` | `你的飞书应用ID` | 飞书开放平台应用管理页面获取 |
+| `FEISHU_APP_SECRET` | `你的飞书应用密钥` | 飞书开放平台应用管理页面获取 |
+| `FEISHU_APP_TOKEN` | `你的多维表格令牌` | 飞书多维表格应用令牌 |
+| `FEISHU_TABLE_ID` | `你的表格ID` | 飞书多维表格ID |
 
 ### 3. 设置 Variables (可选)
 
@@ -70,19 +70,21 @@ pip install -r requirements.txt
 ```bash
 READWISE_TOKEN=你的Readwise令牌
 TARGET_TAG=ai101
-FEISHU_APP_ID=cli_a8342101b9e81013
-FEISHU_APP_SECRET=NEvihgdxiNX65LEstosgCd7msCBw6TIY
-FEISHU_APP_TOKEN=APcrbuGUealLe9sdW8DcZBtCnse
-FEISHU_TABLE_ID=tblUdRDj28uIPVfG
+FEISHU_APP_ID=你的飞书应用ID
+FEISHU_APP_SECRET=你的飞书应用密钥
+FEISHU_APP_TOKEN=你的多维表格令牌
+FEISHU_TABLE_ID=你的表格ID
 ```
 
 ### 运行测试
 
 ```bash
 # 设置环境变量 (临时)
-export READWISE_TOKEN="你的令牌"
-export FEISHU_APP_ID="cli_a8342101b9e81013"
-# ... 设置其他环境变量
+export READWISE_TOKEN="你的Readwise令牌"
+export FEISHU_APP_ID="你的飞书应用ID"
+export FEISHU_APP_SECRET="你的飞书应用密钥"
+export FEISHU_APP_TOKEN="你的多维表格令牌"
+export FEISHU_TABLE_ID="你的表格ID"
 
 # 运行同步脚本
 python aireading_bot.py
