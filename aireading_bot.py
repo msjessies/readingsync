@@ -18,7 +18,7 @@ def get_one_week_ago():
     one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     return one_week_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-def fetch_readwise_data():
+def fetch_readwise_data(time_limited=True):
     """从 Readwise API 获取文章数据和高亮数据"""
     # 创建不使用代理的session
     session = requests.Session()
@@ -31,16 +31,26 @@ def fetch_readwise_data():
     article_params = {
         "tag": TARGET_TAG, 
         "page_size": 100,
-        "updated__gt": get_one_week_ago()  # 只获取一周内更新的文档
     }
+    
+    # 如果启用时间限制，只获取一周内更新的文档
+    if time_limited:
+        article_params["updated__gt"] = get_one_week_ago()
+        print(f"🕒 只获取 {get_one_week_ago()} 之后更新的文档")
+    else:
+        print("🕒 获取所有带标签的文档（无时间限制）")
     
     try:
         print("正在获取文章数据...")
+        print(f"📡 API请求参数: {article_params}")
         resp = session.get("https://readwise.io/api/v3/list/", headers=headers, params=article_params)
+        print(f"📡 API响应状态码: {resp.status_code}")
         resp.raise_for_status()
         articles_data = resp.json()
         
         print(f"获取到 {len(articles_data['results'])} 篇文章")
+        if articles_data['results']:
+            print(f"📄 文章示例: {articles_data['results'][0].get('title', 'No title')}")
         
         # 2. 获取这些文章的所有高亮数据（不限时间）
         article_ids = [doc.get("id") for doc in articles_data['results'] if doc.get("id")]
@@ -71,9 +81,6 @@ def fetch_readwise_data():
         print(f"数据处理失败: {e}")
         return {"results": []}, {"results": []}
 
-# 获取数据
-data, highlights_data = fetch_readwise_data()
-
 def group_highlights_by_parent(highlights_data):
     """按 parent_id 归组高亮数据"""
     highlights_by_parent = {}
@@ -87,9 +94,6 @@ def group_highlights_by_parent(highlights_data):
     
     print(f"找到 {len(highlights_by_parent)} 个文档有相关高亮")
     return highlights_by_parent
-
-# 按文档ID归组高亮
-highlights_by_parent = group_highlights_by_parent(highlights_data)
 
 def format_highlights_as_markdown(highlights_list):
     """将高亮列表格式化为markdown格式"""
@@ -256,6 +260,16 @@ def main():
     """主函数：执行完整的数据同步流程"""
     print("开始同步 Readwise Reader 数据到飞书...")
     
+    # 输出调试信息
+    print(f"🔍 调试信息:")
+    print(f"- 目标标签: {TARGET_TAG}")
+    print(f"- READWISE_TOKEN 已配置: {'是' if READWISE_TOKEN else '否'}")
+    print(f"- FEISHU_APP_ID 已配置: {'是' if APP_ID else '否'}")
+    print(f"- FEISHU_APP_SECRET 已配置: {'是' if APP_SECRET else '否'}")
+    print(f"- FEISHU_APP_TOKEN 已配置: {'是' if APP_TOKEN else '否'}")
+    print(f"- FEISHU_TABLE_ID 已配置: {'是' if TABLE_ID else '否'}")
+    print(f"- 查询时间范围: {get_one_week_ago()} 到现在")
+    
     # 检查必要的环境变量
     required_vars = {
         "READWISE_TOKEN": READWISE_TOKEN,
@@ -271,16 +285,35 @@ def main():
         print("请设置这些环境变量后重新运行程序")
         return
     
+    # 获取 Readwise 数据 - 先尝试一周内的数据
+    print("正在获取 Readwise 数据...")
+    data, highlights_data = fetch_readwise_data(time_limited=True)
+    
+    # 如果一周内没有数据，尝试获取所有数据（用于调试）
+    if not data["results"]:
+        print("⚠️  一周内没有找到数据，尝试获取所有带标签的文档...")
+        data, highlights_data = fetch_readwise_data(time_limited=False)
+    
+    # 按文档ID归组高亮
+    highlights_by_parent = group_highlights_by_parent(highlights_data)
+    
+    # 如果还是没有获取到数据，直接返回
+    if not data["results"]:
+        print("❌ 没有获取到任何数据，可能的原因：")
+        print("  1. Readwise 中没有带有指定标签的文章")
+        print("  2. Readwise API 调用失败")
+        print("  3. 网络连接问题")
+        print("💡 建议：")
+        print("  - 检查 Readwise 中是否有带 'ai101' 标签的文章")
+        print("  - 确认 READWISE_TOKEN 是否正确")
+        print("  - 查看上面的API调用详细日志")
+        return
+    
     # 获取飞书 tenant_access_token
     print("正在获取飞书访问令牌...")
     tenant_token = get_tenant_access_token(APP_ID, APP_SECRET)
     if not tenant_token:
         print("❌ 无法获取飞书访问令牌，退出程序")
-        return
-    
-    # 如果没有获取到数据，直接返回
-    if not data["results"]:
-        print("没有获取到数据，退出程序")
         return
     
     # 获取已存在记录的详细信息
