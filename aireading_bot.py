@@ -3,6 +3,12 @@ import os
 from datetime import datetime, timedelta, timezone
 import pytz
 
+# 禁用代理设置，解决连接问题
+os.environ['HTTP_PROXY'] = ''
+os.environ['HTTPS_PROXY'] = ''
+os.environ['http_proxy'] = ''
+os.environ['https_proxy'] = ''
+
 # 配置从环境变量获取
 READWISE_TOKEN = os.getenv("READWISE_TOKEN")
 TARGET_TAG = os.getenv("TARGET_TAG", "ai101")  # 默认标签，也可以通过环境变量修改
@@ -12,29 +18,102 @@ def get_one_week_ago():
     one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
     return one_week_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-headers = {"Authorization": f"Token {READWISE_TOKEN}"}
-# 只获取过去一周内更新的内容
-params = {
-    "tag": TARGET_TAG, 
-    "page_size": 100,
-    "updated__gt": get_one_week_ago()  # 只获取一周内更新的文档
-}
-
-try:
-    resp = requests.get("https://readwise.io/api/v3/list/", headers=headers, params=params)
-    resp.raise_for_status()  # 检查HTTP状态码
-    data = resp.json()
+def fetch_readwise_data():
+    """从 Readwise API 获取文章数据和高亮数据"""
+    # 创建不使用代理的session
+    session = requests.Session()
+    session.proxies = {}
+    session.trust_env = False
     
-    print(f"命中的文档数量：{len(data['results'])}")
-    for doc in data["results"][:2]:   # 打印前2条，核对格式
-        print(doc["title"], doc.get("tags", []), doc.get("source_url", ""))
+    headers = {"Authorization": f"Token {READWISE_TOKEN}"}
+    
+    # 1. 获取带有指定标签的文章
+    article_params = {
+        "tag": TARGET_TAG, 
+        "page_size": 100,
+        "updated__gt": get_one_week_ago()  # 只获取一周内更新的文档
+    }
+    
+    try:
+        print("正在获取文章数据...")
+        resp = session.get("https://readwise.io/api/v3/list/", headers=headers, params=article_params)
+        resp.raise_for_status()
+        articles_data = resp.json()
         
-except requests.exceptions.RequestException as e:
-    print(f"获取 Readwise 数据失败: {e}")
-    data = {"results": []}
-except Exception as e:
-    print(f"数据处理失败: {e}")
-    data = {"results": []}
+        print(f"获取到 {len(articles_data['results'])} 篇文章")
+        
+        # 2. 获取这些文章的所有高亮数据（不限时间）
+        article_ids = [doc.get("id") for doc in articles_data['results'] if doc.get("id")]
+        
+        if not article_ids:
+            print("没有有效的文章ID，跳过高亮获取")
+            return articles_data, {"results": []}
+        
+        print(f"正在获取 {len(article_ids)} 篇文章的所有高亮数据...")
+        highlight_params = {
+            "category": "highlight",
+            "page_size": 500,  # 高亮数据可能较多
+            "parent_id__in": ",".join(article_ids)  # 只获取相关文章的高亮
+        }
+        
+        resp = session.get("https://readwise.io/api/v3/list/", headers=headers, params=highlight_params)
+        resp.raise_for_status()
+        highlights_data = resp.json()
+        
+        print(f"获取到 {len(highlights_data['results'])} 条高亮")
+        
+        return articles_data, highlights_data
+        
+    except requests.exceptions.RequestException as e:
+        print(f"获取 Readwise 数据失败: {e}")
+        return {"results": []}, {"results": []}
+    except Exception as e:
+        print(f"数据处理失败: {e}")
+        return {"results": []}, {"results": []}
+
+# 获取数据
+data, highlights_data = fetch_readwise_data()
+
+def group_highlights_by_parent(highlights_data):
+    """按 parent_id 归组高亮数据"""
+    highlights_by_parent = {}
+    
+    for highlight in highlights_data.get("results", []):
+        parent_id = highlight.get("parent_id")
+        if parent_id:
+            if parent_id not in highlights_by_parent:
+                highlights_by_parent[parent_id] = []
+            highlights_by_parent[parent_id].append(highlight)
+    
+    print(f"找到 {len(highlights_by_parent)} 个文档有相关高亮")
+    return highlights_by_parent
+
+# 按文档ID归组高亮
+highlights_by_parent = group_highlights_by_parent(highlights_data)
+
+def format_highlights_as_markdown(highlights_list):
+    """将高亮列表格式化为markdown格式"""
+    if not highlights_list:
+        return ""
+    
+    markdown_lines = []
+    for i, highlight in enumerate(highlights_list, 1):
+        # 获取高亮文本
+        text = highlight.get("text", "").strip()
+        if text:
+            # 使用markdown的引用格式
+            markdown_lines.append(f"> {text}")
+            
+            # 如果有注释，添加注释
+            note = highlight.get("note", "").strip()
+            if note:
+                markdown_lines.append(f"*注: {note}*")
+            
+            # 添加空行分隔（除了最后一个）
+            if i < len(highlights_list):
+                markdown_lines.append("")
+    
+    return "\n".join(markdown_lines)
 
 
 def utc_to_beijing(utc_time_str):
@@ -54,8 +133,14 @@ def utc_to_beijing(utc_time_str):
         return utc_time_str
 
 
-def build_feishu_fields(doc):
-    highlights_text = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+def build_feishu_fields(doc, highlights_by_parent):
+    """构建飞书表格字段，使用分离的高亮数据"""
+    # 获取该文档的高亮数据
+    doc_id = doc.get("id")
+    doc_highlights = highlights_by_parent.get(doc_id, [])
+    
+    # 将高亮格式化为markdown
+    highlights_markdown = format_highlights_as_markdown(doc_highlights)
     
     # 过滤掉 ai101 标签，只显示其他有用的标签
     filtered_tags = [tag for tag in doc.get("tags", []) if tag.lower() != "ai101"]
@@ -63,7 +148,7 @@ def build_feishu_fields(doc):
     return {
         "文章标题Article": doc.get("title", ""),
         "分类Tags": ', '.join(filtered_tags),
-        "高亮Highlight": highlights_text,
+        "高亮Highlight": highlights_markdown,
         "摘要Summary": doc.get("summary", ""),
         "URL": doc.get("source_url", ""),    # 原文url
         "加入时间UpdatedTime": utc_to_beijing(doc.get("updated", "") or doc.get("updated_at", ""))
@@ -216,7 +301,10 @@ def main():
         if doc_url in existing_records:
             # 检查highlight是否有更新
             existing_record = existing_records[doc_url]
-            new_highlight = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+            # 获取该文档的新高亮数据
+            doc_id = doc.get("id")
+            doc_highlights = highlights_by_parent.get(doc_id, [])
+            new_highlight = format_highlights_as_markdown(doc_highlights)
             existing_highlight = existing_record['highlight']
             
             if new_highlight != existing_highlight:
@@ -240,7 +328,7 @@ def main():
     if new_docs:
         print(f"\n📝 开始处理 {len(new_docs)} 条新增记录...")
         for doc in new_docs:
-            feishu_fields = build_feishu_fields(doc)
+            feishu_fields = build_feishu_fields(doc, highlights_by_parent)
             print("新增内容：", feishu_fields)    # 可选：方便 debug
             result = insert_to_bitable(tenant_token, APP_TOKEN, TABLE_ID, feishu_fields)
             
@@ -256,7 +344,10 @@ def main():
         print(f"\n🔄 开始处理 {len(update_docs)} 条highlight更新记录...")
         for doc, existing_record in update_docs:
             # 只更新highlight字段
-            new_highlight = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+            # 获取该文档的新高亮数据
+            doc_id = doc.get("id")
+            doc_highlights = highlights_by_parent.get(doc_id, [])
+            new_highlight = format_highlights_as_markdown(doc_highlights)
             update_fields = {"高亮Highlight": new_highlight}
             
             print(f"更新highlight: {existing_record['title']}")
