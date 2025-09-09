@@ -1,14 +1,24 @@
 import requests
 import os
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import pytz
 
 # 配置从环境变量获取
 READWISE_TOKEN = os.getenv("READWISE_TOKEN")
 TARGET_TAG = os.getenv("TARGET_TAG", "ai101")  # 默认标签，也可以通过环境变量修改
 
+def get_one_week_ago():
+    """获取一周前的ISO 8601格式时间戳"""
+    one_week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+    return one_week_ago.strftime('%Y-%m-%dT%H:%M:%SZ')
+
 headers = {"Authorization": f"Token {READWISE_TOKEN}"}
-params = {"tag": TARGET_TAG, "page_size": 100}   # 拉最多100条，可酌情调整
+# 只获取过去一周内更新的内容
+params = {
+    "tag": TARGET_TAG, 
+    "page_size": 100,
+    "updated__gt": get_one_week_ago()  # 只获取一周内更新的文档
+}
 
 try:
     resp = requests.get("https://readwise.io/api/v3/list/", headers=headers, params=params)
@@ -46,9 +56,13 @@ def utc_to_beijing(utc_time_str):
 
 def build_feishu_fields(doc):
     highlights_text = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+    
+    # 过滤掉 ai101 标签，只显示其他有用的标签
+    filtered_tags = [tag for tag in doc.get("tags", []) if tag.lower() != "ai101"]
+    
     return {
         "文章标题Article": doc.get("title", ""),
-        "分类Tags": ', '.join(doc.get("tags", [])),
+        "分类Tags": ', '.join(filtered_tags),
         "高亮Highlight": highlights_text,
         "摘要Summary": doc.get("summary", ""),
         "URL": doc.get("source_url", ""),    # 原文url
@@ -86,8 +100,8 @@ def get_tenant_access_token(app_id, app_secret):
         print(f"✗ 获取 tenant_access_token 异常: {e}")
         return None
 
-def get_existing_urls(token, app_token, table_id):
-    """获取已存在的URL列表，用于去重"""
+def get_existing_records(token, app_token, table_id):
+    """获取已存在记录的详细信息，用于去重和更新判断"""
     url = f'https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records'
     headers = {'Authorization': f'Bearer {token}'}
     params = {'page_size': 500}  # 获取更多记录来检查重复
@@ -97,16 +111,21 @@ def get_existing_urls(token, app_token, table_id):
         resp.raise_for_status()
         result = resp.json()
         
-        existing_urls = set()
+        existing_records = {}  # URL -> {record_id, highlight, ...}
         if 'data' in result and 'items' in result['data']:
             for item in result['data']['items']:
                 if 'fields' in item and 'URL' in item['fields']:
-                    existing_urls.add(item['fields']['URL'])
+                    url = item['fields']['URL']
+                    existing_records[url] = {
+                        'record_id': item.get('record_id'),
+                        'highlight': item['fields'].get('高亮Highlight', ''),
+                        'title': item['fields'].get('文章标题Article', ''),
+                    }
         
-        return existing_urls
+        return existing_records
     except Exception as e:
-        print(f"获取已存在URL失败: {e}")
-        return set()
+        print(f"获取已存在记录失败: {e}")
+        return {}
 
 def insert_to_bitable(token, app_token, table_id, fields):
     """向飞书多维表格插入数据"""
@@ -126,6 +145,26 @@ def insert_to_bitable(token, app_token, table_id, fields):
         return {"error": str(e)}
     except Exception as e:
         print(f"数据处理失败: {e}")
+        return {"error": str(e)}
+
+def update_bitable_record(token, app_token, table_id, record_id, fields):
+    """更新飞书多维表格中的指定记录"""
+    url = f'https://open.feishu.cn/open-apis/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}'
+    headers = {
+        'Authorization': f'Bearer {token}',
+        'Content-Type': 'application/json'
+    }
+    payload = {"fields": fields}
+    
+    try:
+        resp = requests.put(url, headers=headers, json=payload)
+        resp.raise_for_status()  # 检查HTTP状态码
+        return resp.json()
+    except requests.exceptions.RequestException as e:
+        print(f"飞书更新API调用失败: {e}")
+        return {"error": str(e)}
+    except Exception as e:
+        print(f"更新数据处理失败: {e}")
         return {"error": str(e)}
 
 def main():
@@ -159,42 +198,82 @@ def main():
         print("没有获取到数据，退出程序")
         return
     
-    # 获取已存在的URL用于去重
+    # 获取已存在记录的详细信息
     print("正在检查已存在的记录...")
-    existing_urls = get_existing_urls(tenant_token, APP_TOKEN, TABLE_ID)
-    print(f"发现 {len(existing_urls)} 条已存在记录")
+    existing_records = get_existing_records(tenant_token, APP_TOKEN, TABLE_ID)
+    print(f"发现 {len(existing_records)} 条已存在记录")
     
-    # 过滤掉已存在的记录
-    new_docs = []
-    duplicate_count = 0
+    # 分类处理：新增 vs 更新
+    new_docs = []  # 新URL，需要插入
+    update_docs = []  # 已存在URL，但highlight可能有更新
+    skipped_count = 0
+    
     for doc in data["results"]:
         doc_url = doc.get("source_url", "")
-        if doc_url and doc_url in existing_urls:
-            duplicate_count += 1
-            print(f"⚠️  跳过重复记录: {doc.get('title', 'Unknown')}")
+        if not doc_url:
+            continue
+            
+        if doc_url in existing_records:
+            # 检查highlight是否有更新
+            existing_record = existing_records[doc_url]
+            new_highlight = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+            existing_highlight = existing_record['highlight']
+            
+            if new_highlight != existing_highlight:
+                print(f"🔄 发现highlight更新: {doc.get('title', 'Unknown')}")
+                update_docs.append((doc, existing_record))
+            else:
+                skipped_count += 1
+                print(f"⚠️  无变更，跳过: {doc.get('title', 'Unknown')}")
         else:
+            print(f"✨ 发现新文档: {doc.get('title', 'Unknown')}")
             new_docs.append(doc)
     
-    print(f"共 {len(data['results'])} 条记录，跳过 {duplicate_count} 条重复，将同步 {len(new_docs)} 条新记录")
+    print(f"共 {len(data['results'])} 条记录: {len(new_docs)} 条新增，{len(update_docs)} 条需更新highlight，{skipped_count} 条无变更")
     
-    if not new_docs:
-        print("🎉 没有新记录需要同步！")
+    if not new_docs and not update_docs:
+        print("🎉 没有记录需要同步或更新！")
         return
     
-    # 批量同步新记录
-    success_count = 0
-    for doc in new_docs:
-        feishu_fields = build_feishu_fields(doc)
-        print("写入内容：", feishu_fields)    # 可选：方便 debug
-        result = insert_to_bitable(tenant_token, APP_TOKEN, TABLE_ID, feishu_fields)
-        
-        if "error" not in result:
-            success_count += 1
-            print(f'✓ 写入[{feishu_fields["文章标题Article"]}] 成功')
-        else:
-            print(f'✗ 写入[{feishu_fields["文章标题Article"]}] 失败:', result)
+    # 处理新增记录
+    insert_success_count = 0
+    if new_docs:
+        print(f"\n📝 开始处理 {len(new_docs)} 条新增记录...")
+        for doc in new_docs:
+            feishu_fields = build_feishu_fields(doc)
+            print("新增内容：", feishu_fields)    # 可选：方便 debug
+            result = insert_to_bitable(tenant_token, APP_TOKEN, TABLE_ID, feishu_fields)
+            
+            if "error" not in result:
+                insert_success_count += 1
+                print(f'✓ 新增[{feishu_fields["文章标题Article"]}] 成功')
+            else:
+                print(f'✗ 新增[{feishu_fields["文章标题Article"]}] 失败:', result)
     
-    print(f"\n🎉 同步完成！成功: {success_count}/{len(new_docs)} (总共获取: {len(data['results'])})")
+    # 处理highlight更新记录
+    update_success_count = 0
+    if update_docs:
+        print(f"\n🔄 开始处理 {len(update_docs)} 条highlight更新记录...")
+        for doc, existing_record in update_docs:
+            # 只更新highlight字段
+            new_highlight = "\n".join([h["text"] for h in doc.get("highlights", []) if h.get("text")])
+            update_fields = {"高亮Highlight": new_highlight}
+            
+            print(f"更新highlight: {existing_record['title']}")
+            result = update_bitable_record(tenant_token, APP_TOKEN, TABLE_ID, existing_record['record_id'], update_fields)
+            
+            if "error" not in result:
+                update_success_count += 1
+                print(f'✓ 更新[{existing_record["title"]}]的highlight 成功')
+            else:
+                print(f'✗ 更新[{existing_record["title"]}]的highlight 失败:', result)
+    
+    print(f"\n🎉 同步完成！")
+    print(f"📊 结果统计:")
+    print(f"   • 新增记录: {insert_success_count}/{len(new_docs)} 成功")
+    print(f"   • 更新记录: {update_success_count}/{len(update_docs)} 成功")
+    print(f"   • 无变更记录: {skipped_count} 条")
+    print(f"   • 总共获取: {len(data['results'])} 条 (过去一周内更新)")
 
 
 if __name__ == "__main__":
