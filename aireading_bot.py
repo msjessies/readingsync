@@ -45,12 +45,19 @@ def fetch_readwise_data(time_limited=True):
         print(f"📡 API请求参数: {article_params}")
         resp = session.get("https://readwise.io/api/v3/list/", headers=headers, params=article_params)
         print(f"📡 API响应状态码: {resp.status_code}")
+        
+        # 打印响应内容以便调试
+        if resp.status_code != 200:
+            print(f"📡 API错误响应: {resp.text[:500]}")
+        
         resp.raise_for_status()
         articles_data = resp.json()
         
         print(f"获取到 {len(articles_data['results'])} 篇文章")
         if articles_data['results']:
             print(f"📄 文章示例: {articles_data['results'][0].get('title', 'No title')}")
+        else:
+            print("📄 未找到任何文章")
         
         # 2. 获取这些文章的所有高亮数据（不限时间）
         article_ids = [doc.get("id") for doc in articles_data['results'] if doc.get("id")]
@@ -63,10 +70,16 @@ def fetch_readwise_data(time_limited=True):
         highlight_params = {
             "category": "highlight",
             "page_size": 500,  # 高亮数据可能较多
-            "parent_id__in": ",".join(article_ids)  # 只获取相关文章的高亮
+            "parent_id__in": ",".join(str(id) for id in article_ids)  # 确保ID是字符串格式
         }
         
+        print(f"📡 高亮API请求参数: {highlight_params}")
         resp = session.get("https://readwise.io/api/v3/list/", headers=headers, params=highlight_params)
+        print(f"📡 高亮API响应状态码: {resp.status_code}")
+        
+        if resp.status_code != 200:
+            print(f"📡 高亮API错误响应: {resp.text[:500]}")
+        
         resp.raise_for_status()
         highlights_data = resp.json()
         
@@ -285,14 +298,14 @@ def main():
         print("请设置这些环境变量后重新运行程序")
         return
     
-    # 获取 Readwise 数据 - 先尝试一周内的数据
+    # 获取 Readwise 数据 - 先尝试所有数据（调试模式）
     print("正在获取 Readwise 数据...")
-    data, highlights_data = fetch_readwise_data(time_limited=True)
+    data, highlights_data = fetch_readwise_data(time_limited=False)
     
-    # 如果一周内没有数据，尝试获取所有数据（用于调试）
+    # 如果没有数据，再尝试一周内的数据（排查API问题）
     if not data["results"]:
-        print("⚠️  一周内没有找到数据，尝试获取所有带标签的文档...")
-        data, highlights_data = fetch_readwise_data(time_limited=False)
+        print("⚠️  没有找到任何带标签的文档，尝试限制时间范围...")
+        data, highlights_data = fetch_readwise_data(time_limited=True)
     
     # 按文档ID归组高亮
     highlights_by_parent = group_highlights_by_parent(highlights_data)
