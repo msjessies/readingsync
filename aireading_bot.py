@@ -365,6 +365,11 @@ def main():
             new_highlight = format_highlights_as_markdown(doc_highlights)
             existing_highlight = existing_record['highlight']
             
+            # 调试信息：显示高亮比较情况
+            print(f"🔍 检查文档: {doc.get('title', 'Unknown')[:50]}...")
+            print(f"    现有高亮长度: {len(existing_highlight)}")
+            print(f"    新高亮长度: {len(new_highlight)}")
+            
             if new_highlight != existing_highlight:
                 print(f"🔄 发现highlight更新: {doc.get('title', 'Unknown')}")
                 update_docs.append((doc, existing_record))
