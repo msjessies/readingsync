@@ -163,10 +163,11 @@ def build_feishu_fields(doc, highlights_by_parent):
     doc_highlights = highlights_by_parent.get(doc_id, [])
     
     # 调试信息：显示匹配情况
+    title = doc.get('title') or 'Unknown'
     if doc_highlights:
-        print(f"✅ 文档 {doc.get('title', 'Unknown')[:50]}... 找到 {len(doc_highlights)} 条高亮")
+        print(f"✅ 文档 {title[:50]}... 找到 {len(doc_highlights)} 条高亮")
     else:
-        print(f"❌ 文档 {doc.get('title', 'Unknown')[:50]}... 未找到高亮 (ID: {doc_id})")
+        print(f"❌ 文档 {title[:50]}... 未找到高亮 (ID: {doc_id})")
     
     # 将高亮格式化为markdown
     highlights_markdown = format_highlights_as_markdown(doc_highlights)
