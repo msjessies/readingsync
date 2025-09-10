@@ -164,7 +164,7 @@ def build_feishu_fields(doc, highlights_by_parent):
     
     return {
         "文章标题Article": doc.get("title", ""),
-        "分类Tags": ', '.join(filtered_tags),
+        "分类Tags": filtered_tags,  # 飞书多选字段需要字符串数组，不是逗号分隔的字符串
         "高亮Highlight": highlights_markdown,
         "摘要Summary": doc.get("summary", ""),
         "URL": doc.get("source_url", ""),    # 原文url
