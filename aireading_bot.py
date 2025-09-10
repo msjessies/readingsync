@@ -351,6 +351,13 @@ def main():
     update_docs = []  # 已存在URL，但highlight可能有更新
     skipped_count = 0
     
+    # 临时调试：强制处理第一篇文章来测试高亮匹配
+    debug_doc = data["results"][0] if data["results"] else None
+    if debug_doc:
+        print(f"🧪 调试模式：强制处理第一篇文章来测试高亮")
+        debug_fields = build_feishu_fields(debug_doc, highlights_by_parent)
+        print(f"🧪 调试结果: 高亮内容长度 = {len(debug_fields.get('高亮Highlight', ''))}")
+    
     for doc in data["results"]:
         doc_url = doc.get("source_url", "")
         if not doc_url:
