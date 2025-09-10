@@ -119,15 +119,10 @@ def format_highlights_as_markdown(highlights_list):
     if not highlights_list:
         return ""
     
-    # 调试信息：显示第一个高亮的结构
-    if highlights_list:
-        print(f"🔍 高亮数据结构示例: {list(highlights_list[0].keys())}")
-        print(f"🔍 第一个高亮的内容字段: text={highlights_list[0].get('text', 'N/A')}, content={highlights_list[0].get('content', 'N/A')}")
-    
     markdown_lines = []
     for i, highlight in enumerate(highlights_list, 1):
-        # 尝试不同的可能字段名
-        text = highlight.get("text", "").strip() or highlight.get("content", "").strip() or highlight.get("highlight", "").strip()
+        # Readwise API 使用 "content" 字段存储高亮文本
+        text = highlight.get("content", "").strip()
         if text:
             # 使用markdown的引用格式
             markdown_lines.append(f"> {text}")
@@ -167,12 +162,6 @@ def build_feishu_fields(doc, highlights_by_parent):
     doc_id = doc.get("id")
     doc_highlights = highlights_by_parent.get(doc_id, [])
     
-    # 调试信息：显示匹配情况
-    title = doc.get('title') or 'Unknown'
-    if doc_highlights:
-        print(f"✅ 文档 {title[:50]}... 找到 {len(doc_highlights)} 条高亮")
-    else:
-        print(f"❌ 文档 {title[:50]}... 未找到高亮 (ID: {doc_id})")
     
     # 将高亮格式化为markdown
     highlights_markdown = format_highlights_as_markdown(doc_highlights)
@@ -357,21 +346,6 @@ def main():
     update_docs = []  # 已存在URL，但highlight可能有更新
     skipped_count = 0
     
-    # 临时调试：强制处理一篇有高亮的文章来测试匹配
-    debug_doc = None
-    for doc in data["results"]:
-        if doc.get("id") in highlights_by_parent:
-            debug_doc = doc
-            break
-    
-    if debug_doc:
-        print(f"🧪 调试模式：找到有高亮的文章进行测试 (ID: {debug_doc.get('id')})")
-        debug_fields = build_feishu_fields(debug_doc, highlights_by_parent)
-        print(f"🧪 调试结果: 高亮内容长度 = {len(debug_fields.get('高亮Highlight', ''))}")
-        if debug_fields.get('高亮Highlight'):
-            print(f"🧪 高亮内容预览: {debug_fields.get('高亮Highlight')[:200]}...")
-    else:
-        print("🧪 调试模式：没有找到有高亮的文章")
     
     for doc in data["results"]:
         doc_url = doc.get("source_url", "")
@@ -387,10 +361,6 @@ def main():
             new_highlight = format_highlights_as_markdown(doc_highlights)
             existing_highlight = existing_record['highlight']
             
-            # 调试信息：显示高亮比较情况
-            print(f"🔍 检查文档: {doc.get('title', 'Unknown')[:50]}...")
-            print(f"    现有高亮长度: {len(existing_highlight)}")
-            print(f"    新高亮长度: {len(new_highlight)}")
             
             if new_highlight != existing_highlight:
                 print(f"🔄 发现highlight更新: {doc.get('title', 'Unknown')}")
