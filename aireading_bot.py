@@ -119,10 +119,15 @@ def format_highlights_as_markdown(highlights_list):
     if not highlights_list:
         return ""
     
+    # 调试信息：显示第一个高亮的结构
+    if highlights_list:
+        print(f"🔍 高亮数据结构示例: {list(highlights_list[0].keys())}")
+        print(f"🔍 第一个高亮的内容字段: text={highlights_list[0].get('text', 'N/A')}, content={highlights_list[0].get('content', 'N/A')}")
+    
     markdown_lines = []
     for i, highlight in enumerate(highlights_list, 1):
-        # 获取高亮文本
-        text = highlight.get("text", "").strip()
+        # 尝试不同的可能字段名
+        text = highlight.get("text", "").strip() or highlight.get("content", "").strip() or highlight.get("highlight", "").strip()
         if text:
             # 使用markdown的引用格式
             markdown_lines.append(f"> {text}")
