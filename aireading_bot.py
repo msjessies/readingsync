@@ -56,6 +56,9 @@ def fetch_readwise_data(time_limited=True):
         print(f"获取到 {len(articles_data['results'])} 篇文章")
         if articles_data['results']:
             print(f"📄 文章示例: {articles_data['results'][0].get('title', 'No title')}")
+            # 添加调试信息：显示文章ID
+            article_ids = [doc.get("id") for doc in articles_data['results'] if doc.get("id")]
+            print(f"📄 文章ID前5个: {article_ids[:5]}")
         else:
             print("📄 未找到任何文章")
         
@@ -106,6 +109,9 @@ def group_highlights_by_parent(highlights_data):
             highlights_by_parent[parent_id].append(highlight)
     
     print(f"找到 {len(highlights_by_parent)} 个文档有相关高亮")
+    # 添加调试信息：显示有高亮的文档ID
+    if highlights_by_parent:
+        print(f"📝 有高亮的文档ID前5个: {list(highlights_by_parent.keys())[:5]}")
     return highlights_by_parent
 
 def format_highlights_as_markdown(highlights_list):
@@ -155,6 +161,12 @@ def build_feishu_fields(doc, highlights_by_parent):
     # 获取该文档的高亮数据
     doc_id = doc.get("id")
     doc_highlights = highlights_by_parent.get(doc_id, [])
+    
+    # 调试信息：显示匹配情况
+    if doc_highlights:
+        print(f"✅ 文档 {doc.get('title', 'Unknown')[:50]}... 找到 {len(doc_highlights)} 条高亮")
+    else:
+        print(f"❌ 文档 {doc.get('title', 'Unknown')[:50]}... 未找到高亮 (ID: {doc_id})")
     
     # 将高亮格式化为markdown
     highlights_markdown = format_highlights_as_markdown(doc_highlights)
